@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Chat with AI Doctor</title>
+        <link rel="stylesheet" href="/static/css/styles.css">
+    </head>
+    <body>
+        <div class="header">
+            <h1>Chat with AI Doctor</h1>
+        </div>
+        <div class="content">
+            <div class="chat-container">
+                <div class="control-buttons">
+                    <button onclick="startChat()">Start Chat</button>
+                    <button onclick="endChat()">End Chat</button>
+                </div>
+                <div id="chat-history" class="chat-history">
+                    <!-- Conversation history will be displayed here -->
+                </div>
+                <div class="form-container">
+                    <textarea id="prompt" name="prompt" placeholder="Type your message here..."></textarea>
+
+                    <label for="file-upload">Upload a PDF report (optional):</label>
+                    
+                    <input type="file" id="file-upload" name="file-upload" accept="application/pdf" multiple onchange="showUploadedFiles()"></input>
+
+                    <div id="file-list" class="file-list">
+                        <!-- File names will appear here -->
+                    </div>
+                    <button type="button" onclick="sendMessage()">Send</button>
+                </div>
+            </div>
+        </div>
+        <script>
+             const API_BASE_URL =
+    window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost"
+        ? "http://127.0.0.1:8000" // Local API URL
+        : window.location.hostname.includes("s3") || window.location.hostname.includes("amazonaws")
+        ? "https://2vw6nl2cxg.execute-api.us-east-1.amazonaws.com/prod" // API Gateway URL for S3-hosted frontend
+        : window.location.hostname.includes("lambda-url.us-east-1.on.aws")
+        ? "https://rqr7l4e2exi4vtfsd7azrlabtu0bdfev.lambda-url.us-east-1.on.aws" // Lambda Function URL
+        : window.location.hostname.includes("doctor-ai.drofn.com")
+        ? "https://2vw6nl2cxg.execute-api.us-east-1.amazonaws.com/prod" // API Gateway URL for CloudFront custom domain
+        : "https://2vw6nl2cxg.execute-api.us-east-1.amazonaws.com/prod"; // Default fallback to API Gateway URL
+
+
+        console.log("Resetting inactivity timeout...", API_BASE_URL);
+
+            let isChatActive = false;
+
+            function startChat() {
+                isChatActive = true;
+                document.getElementById('chat-history').innerHTML = '<div class="chat-bubble ai">"Hello, I am your AI Doctor. I’m here to assist you with any health-related questions or concerns you might have. Feel free to ask about symptoms, conditions, or treatments. You can also upload your medical reports or previous doctor consultations to help me provide more personalized and accurate insights. How may I assist you today?" </div>';
+            }
+
+           function endChat() {
+                fetch(`${API_BASE_URL}/clear-conversation`, { method: 'POST' })
+                    .then(response => response.json())
+                    .then(() => {
+                        document.getElementById('chat-history').innerHTML = '<div class="chat-bubble ai">Chat ended. Have a great day!</div>';
+                        alert('Conversation history cleared.');
+                    });
+            }
+
+            function showUploadedFiles() {
+                
+                const fileInput = document.getElementById('file-upload');
+                const fileListContainer = document.getElementById('file-list');
+                const files = Array.from(fileInput.files);
+
+                // Display all uploaded file names
+                files.forEach((file, index) => {
+                    const listItem = document.createElement('div');
+                    listItem.textContent = `${index + 1}. ${file.name}`;
+                    fileListContainer.appendChild(listItem);
+                });
+            }
+
+
+            async function sendMessage() {
+                if (!isChatActive) {
+                    alert('Please start the chat first.');
+                    return;
+                }
+
+                const prompt = document.getElementById('prompt').value;
+                const fileInput = document.getElementById('file-upload');
+                const chatHistory = document.getElementById('chat-history');
+
+                // Append user message to chat history
+                const userMessage = document.createElement('div');
+                userMessage.className = 'chat-bubble user';
+                userMessage.textContent = prompt;
+                chatHistory.appendChild(userMessage);
+
+                let reportTexts = [];
+                const errorMessages = [];
+
+                if (fileInput.files.length > 0) {
+                    for (const file of fileInput.files) {
+                        const formData = new FormData();
+                        formData.append('file', file);
+
+                        try {
+                            const pdfResponse = await fetch(`${API_BASE_URL}/upload-pdf/`, {
+                                method: 'POST',
+                                body: formData
+                            });
+
+                            if (!pdfResponse.ok) {
+                                const errorData = await pdfResponse.json();
+                                errorMessages.push(`${file.name}: ${errorData.detail}`);
+                            } else {
+                                const pdfData = await pdfResponse.json();
+                                reportTexts.push(pdfData.text);
+                            }
+                        } catch (error) {
+                            errorMessages.push(`${file.name}: Failed to process.`);
+                        }
+                    }
+                }
+
+                const response = await fetch(`${API_BASE_URL}/generate-response`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt, report_text: reportTexts }) // Send as an array
+                });
+
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder("utf-8");
+
+                let content = "";
+                let isFirstUpdate = true;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    content += decoder.decode(value, { stream: true });
+
+                    if (isFirstUpdate) {
+                        // Create AI response bubble on the first update
+                        const liveResponse = document.createElement('div');
+                        liveResponse.className = 'chat-bubble ai';
+                        liveResponse.innerHTML = content.replace(/\\n/g, '<br>'); // Convert line breaks
+                        chatHistory.appendChild(liveResponse);
+                        isFirstUpdate = false;
+                    } else {
+                        // Update the last AI response bubble
+                        const existingAiBubble = document.querySelector('.chat-bubble.ai:last-child');
+                        if (existingAiBubble) {
+                            existingAiBubble.innerHTML = content.replace(/\\n/g, '<br>');
+                        }
+                    }
+
+                    chatHistory.scrollTop = chatHistory.scrollHeight;
+                }
+
+                // Ensure only one final AI response bubble
+                const aiMessage = document.querySelector('.chat-bubble.ai:last-child');
+                if (aiMessage) {
+                    aiMessage.innerHTML = content.replace(/\\n/g, '<br>'); // Convert line breaks
+                }
+
+                // Scroll to the bottom of chat history
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+
+                // Clear the prompt input
+                document.getElementById('prompt').value = '';
+            }
+        </script>
+    </body>
+    </html>

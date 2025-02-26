@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Doctor AI</title>
+    <link rel="stylesheet" href="static/css/styles2.css">
+    <style>
+        .modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 50%;
+    top: 50%;
+    width: 60%;
+    max-width: 500px;
+    max-height: 60vh; /* ✅ Limits modal height */
+    background-color: white;
+    padding: 15px; /* ✅ Reduced padding */
+    border-radius: 10px;
+    transform: translate(-50%, -50%);
+    overflow-y: auto; /* ✅ Enables scrolling if content overflows */
+}
+
+.modal-content {
+    text-align: center;
+    font-family: Arial, sans-serif;
+    font-size: 14px; /* ✅ Slightly smaller font */
+}
+
+#agree-button {
+    background-color: #007BFF;
+    color: white;
+    border: none;
+    padding: 8px 16px; /* ✅ Smaller button */
+    margin-top: 10px; /* ✅ Reduced margin */
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 5px;
+}
+
+#agree-button:hover {
+    background-color: #0056b3;
+}
+
+    </style>
+</head>
+
+<body>
+    <!-- Medical Disclaimer Modal -->
+    <div id="disclaimer-modal" class="modal">
+        <div class="modal-content">
+            <h2>Important Medical Disclaimer</h2>
+            <p>
+                The information and recommendations provided by this AI system are for <strong>informational and
+                    educational purposes only</strong>.
+                This tool does <strong>not</strong> provide medical diagnosis, treatment, or medical advice.
+            </p>
+            <p><strong>Before relying on any information:</strong></p>
+            <ul>
+                <li><strong>Consult a Licensed Healthcare Professional:</strong> Always seek advice from a qualified
+                    doctor regarding medical conditions.</li>
+                <li><strong>Do Not Ignore Medical Advice:</strong> Never disregard professional medical advice or delay
+                    seeking it because of information provided by AI.</li>
+                <li><strong>Emergency Situations:</strong> If you experience a medical emergency, call emergency
+                    services or visit a hospital immediately.</li>
+            </ul>
+            <p>
+                By proceeding, you acknowledge that this AI system is <strong>not a substitute for professional medical
+                    consultation</strong>.
+                You assume full responsibility for any actions taken based on the insights provided.
+            </p>
+            <button id="agree-button">I Understand and Agree</button>
+        </div>
+    </div>
+
+    <!-- Header -->
+    <div class="header">
+        <h1>Doctor AI</h1>
+        <p>For your health-related queries</p>
+    </div>
+    <main>
+        <p id="user-email" style="display: none; font-weight: bold; background-color: #00ff55"></p>
+        <button id="logout-button"
+            style="display: none; background-color: red; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer;">
+            Logout
+        </button>
+    </main>
+
+    <!-- AI Options -->
+    <div class="content">
+        <div class="options">
+            <button onclick="window.location.href = '/chat-with-ai.html';">Chat with AI Doctor</button>
+            <button onclick="window.location.href = '/talk-with-ai.html';">Talk to AI Doctor</button>
+        </div>
+    </div>
+
+    <!-- Hero Section -->
+    <div class="hero">
+        <img src="static/images/doctor.jpg" alt="Doctor" class="doctor-image">
+    </div>
+
+    <footer>
+        <p>Made with ❤️ by Drofn's Team</p>
+    </footer>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            console.log("DOM fully loaded");
+
+            const modal = document.getElementById("disclaimer-modal");
+            const agreeButton = document.getElementById("agree-button");
+            const userEmailDisplay = document.getElementById("user-email");
+            const logoutButton = document.getElementById("logout-button");
+
+           
+            const API_BASE_URL =
+    window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost"
+        ? "http://127.0.0.1:8000" // Local API URL
+        : window.location.hostname.includes("s3") || window.location.hostname.includes("amazonaws")
+        ? "https://2vw6nl2cxg.execute-api.us-east-1.amazonaws.com/prod" // API Gateway URL for S3-hosted frontend
+        : window.location.hostname.includes("lambda-url.us-east-1.on.aws")
+        ? "https://rqr7l4e2exi4vtfsd7azrlabtu0bdfev.lambda-url.us-east-1.on.aws" // Lambda Function URL
+        : window.location.hostname.includes("doctor-ai.drofn.com")
+        ? "https://2vw6nl2cxg.execute-api.us-east-1.amazonaws.com/prod" // API Gateway URL for CloudFront custom domain
+        : "https://2vw6nl2cxg.execute-api.us-east-1.amazonaws.com/prod"; // Default fallback to API Gateway URL
+
+
+            console.log("Using API_BASE_URL:", API_BASE_URL);
+
+            // Fallback-safe storage functions
+            function setStorage(key, value) {
+                try {
+                    localStorage.setItem(key, value);
+                } catch (e) {
+                    document.cookie = `${key}=${value}; path=/;`;
+                }
+            }
+
+            function getStorage(key) {
+                try {
+                    return localStorage.getItem(key);
+                } catch (e) {
+                    const match = document.cookie.match(new RegExp(`(^| )${key}=([^;]+)`));
+                    return match ? match[2] : null;
+                }
+            }
+
+            function removeStorage(key) {
+                try {
+                    localStorage.removeItem(key);
+                } catch (e) {
+                    document.cookie = `${key}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC;`;
+                }
+            }
+
+            // Check login status
+            const checkLoginStatus = () => {
+                const token = getStorage("token");
+                const email = getStorage("email");
+
+                if (!token || !email) {
+                    console.log("User not logged in. Redirecting to login.");
+                    window.location.href = "https://doctor-ai.drofn.com/login.html";
+                    return false;
+                }
+
+                userEmailDisplay.textContent = `Logged in as: ${email}`;
+                userEmailDisplay.style.display = "block";
+                logoutButton.style.display = "block";
+                return true;
+            };
+
+            // // Show disclaimer modal if not accepted
+            // if (getStorage("disclaimerAccepted") !== "true") {
+            //     modal.style.display = "block";
+            // } else {
+            //     checkLoginStatus();
+            // }
+
+            // // Agree button action
+            // agreeButton.addEventListener("click", () => {
+            //     setStorage("disclaimerAccepted", "true");
+            //     modal.style.display = "none";
+            //     checkLoginStatus();
+            // });
+            // Function to set a cookie with expiry
+function setCookieWithExpiry(name, value, expiryMinutes) {
+    const date = new Date();
+    date.setTime(date.getTime() + expiryMinutes * 60 * 1000);
+    document.cookie = `${name}=${value}; expires=${date.toUTCString()}; path=/;`;
+}
+
+// Function to get cookie by name
+function getCookie(name) {
+    const match = document.cookie.match(new RegExp(`(^| )${name}=([^;]+)`));
+    return match ? match[2] : null;
+}
+
+// Show disclaimer modal if cookie is not set
+if (getCookie("disclaimerAccepted") !== "true") {
+    modal.style.display = "block";
+} else {
+    checkLoginStatus();
+}
+
+// Agree button action
+agreeButton.addEventListener("click", () => {
+    setCookieWithExpiry("disclaimerAccepted", "true", 60); // 60 minutes expiry
+    modal.style.display = "none";
+    checkLoginStatus();
+});
+
+
+            // Logout button action
+            logoutButton.addEventListener("click", () => {
+                removeStorage("token");
+                removeStorage("email");
+                alert("Logged out successfully.");
+                window.location.href = "https://doctor-ai.drofn.com/login.html";
+            });
+        });
+    </script>
+</body>
+
+</html>

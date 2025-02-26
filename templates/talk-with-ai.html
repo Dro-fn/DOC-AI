@@ -1,0 +1,704 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Talk to AI Doctor</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+    <div class="header">
+        <h1>Talk to AI Doctor</h1>
+    </div>
+    
+    <div class="content">
+        <div class="avatar-container">
+            <img src="static/images/DOCTORAI2.webp" alt="AI Avatar" class="avatar-image" style="width: 800px; height: 500px;">
+
+        </div>
+
+        <div class="controls">
+            <button id="start-consultation">Start Conversation</button>
+            <button id="stop">Stop AI reply</button>
+            <button id="end-consultation">End Conversation</button>
+            <label for="language-select">Choose Language:</label>
+    <select id="language-select">
+        <option value="en-US|Joanna" selected>English (Joanna)</option>
+        <option value="hi-IN|Kajal">Hindi (Kajal)</option>
+        <option value="es-ES|Lucia">Spanish (Lucia)</option>
+        <option value="fr-FR|Lea">French (Lea)</option>
+        <option value="de-DE|Vicki">German (Vicki)</option>
+    </select>
+        </div>
+
+        <p id="status" class="status">Click Start Conversation to begin.</p>
+
+        <div class="file-upload">
+            <button id="uploadButton">📄 Select & Upload Medical Reports PDF(s)</button>
+            <input type="file" id="pdf-upload" name="file-upload" accept="application/pdf" multiple style="display: none;">
+        </div>
+
+
+
+        <div id="file-list"></div>
+        <div id="chat"></div>
+    </div>
+
+<script>
+ 
+    
+    document.addEventListener("DOMContentLoaded", function () {
+        console.log("DOM Loaded, initializing event listeners...");
+
+        // ✅ Select all required elements
+        const startBtn = document.getElementById("start-consultation");
+        const stopBtn = document.getElementById("stop");
+        const endBtn = document.getElementById("end-consultation");
+        const uploadButton = document.getElementById("uploadButton");
+        const fileInput = document.getElementById("pdf-upload");
+        const fileListDiv = document.getElementById("file-list");
+        const chatDiv = document.getElementById("chat");
+        const languageSelect = document.getElementById("language-select");
+        const API_BASE_URL =
+    window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost"
+        ? "http://127.0.0.1:8000" // Local API URL
+        : window.location.hostname.includes("s3") || window.location.hostname.includes("amazonaws")
+        ? "https://2vw6nl2cxg.execute-api.us-east-1.amazonaws.com/prod" // API Gateway URL for S3-hosted frontend
+        : window.location.hostname.includes("lambda-url.us-east-1.on.aws")
+        ? "https://rqr7l4e2exi4vtfsd7azrlabtu0bdfev.lambda-url.us-east-1.on.aws" // Lambda Function URL
+        : window.location.hostname.includes("doctor-ai.drofn.com")
+        ? "https://2vw6nl2cxg.execute-api.us-east-1.amazonaws.com/prod" // API Gateway URL for CloudFront custom domain
+        : "https://2vw6nl2cxg.execute-api.us-east-1.amazonaws.com/prod"; // Default fallback to API Gateway URL
+
+        console.log("Resetting inactivity timeout...", API_BASE_URL);
+
+        if (!startBtn || !stopBtn || !endBtn || !uploadButton || !fileInput || !fileListDiv || !chatDiv || !languageSelect) {
+            console.error("One or more elements are missing from the DOM!");
+            return;
+        }
+
+        let recognition;
+        let audio = null;
+        let conversationHistory = []; // Store conversation history
+        let extractedTexts = []; // Store extracted PDF texts
+        let inactivityTimer = null;
+        
+        let selectedLanguage = "en"; // Default language
+        let voiceId = "Joanna"; // Default Polly voice
+
+        
+        languageSelect.addEventListener("change", function () {
+        const [languageCode, selectedVoice] = languageSelect.value.split("|");
+        selectedLanguage = languageCode;
+        voiceId = selectedVoice;
+        console.log(`Selected Language-pepe: ${selectedLanguage}, Voice: ${voiceId}`);
+    });
+
+
+
+// ✅ Check & Request Microphone Permissions on Safari/iPhone
+if (isSafari()) {
+    displayMicAccessMessage(); // Display message for Safari users
+    requestMicPermission();    // Request microphone permission immediately
+}
+
+
+
+
+        
+
+        // ✅ Start conversation: Play Polly introduction, then start listening
+        startBtn.addEventListener("click", async function () {
+            console.log("Start button clicked. Playing introduction...");
+            
+            
+            // Ensure audio can play after user interaction
+            const introText = "Hello! I am Doctor AI, your virtual health assistant. "
+                + "I can help you understand your symptoms, provide general health insights, "
+                + "and guide you on when to seek medical attention. "
+                + "Please describe your symptoms, and I will do my best to assist you with reliable information.";
+
+            await playPolly(introText);  // Polly starts speaking
+            console.log("✅ Polly finished speaking. Starting speech recognition...");
+            requestMicPermission()
+            // setTimeout(startListening, 500); // Start listening **after** Polly
+            startListening(); 
+            resetInactivityTimer();
+
+            
+        });
+        // ✅ Stop Polly and Start Listening
+        stopBtn.addEventListener("click", function () {
+            console.log("Stop button clicked. Stopping Polly and starting listening...");
+            stopPolly(true); // Stop Polly and immediately start listening
+        });
+
+        // ✅ End conversation (clear conversation history)
+        // ✅ End conversation (clear conversation history & uploaded PDFs)
+
+        endBtn.addEventListener("click", async function () {
+            console.log("🔴 Ending conversation...");
+
+            try {
+                await fetch(`${API_BASE_URL}/reset`, { method: "POST" }); // ✅ Reset session on the server
+            } catch (error) {
+                console.error("❌ Error resetting session:", error);
+            }
+
+            // ✅ Reset UI to initial state
+            chatDiv.innerHTML = "<p>Click 'Start Conversation' to begin.</p>"; // Reset chat UI
+            fileListDiv.innerHTML = ""; // Clear uploaded files
+            fileInput.value = ""; // Reset file input field
+            conversationHistory = []; // Clear stored conversation
+            extractedTexts = []; // Clear extracted PDF texts
+         
+           
+            
+            
+
+           
+            // ✅ Stop Everything (Polly, Speech Recognition & Timers)
+            stopPolly2();
+            stopListening();
+            resetTimers();
+
+            // ✅ Ensure speech recognition cannot restart
+            if (recognition) {
+                recognition.onend = null;  // Prevent recognition from restarting
+            }
+
+            console.log("✅ Conversation fully reset. Polly, Listening, and Timers Stopped.");
+        });
+
+        // ✅ Stop Polly Completely
+        function stopPolly2() {
+            if (audio) {
+                console.log("🔴 Stopping Polly audio...");
+                audio.pause();
+                audio = null;
+            }
+        }
+
+            // ✅ Reset All Timers to Prevent Further Messages
+        function resetTimers()  {
+    // ✅ Clear the inactivity timer
+                if (inactivityTimer) {
+                    clearTimeout(inactivityTimer);
+                    inactivityTimer = null;
+                }
+
+                // ✅ Clear all reminder timers (if any exist)
+                if (reminderTimers.length > 0) {
+                    reminderTimers.forEach(clearTimeout);
+                    reminderTimers = [];
+                }
+            }
+
+
+            
+        
+
+        // ✅ Function to start listening for user input
+        function startListening() {
+            console.log("Starting speech recognition...");
+            if (!window.SpeechRecognition && !window.webkitSpeechRecognition) {
+            console.error("❌ Speech Recognition API is not supported in this browser.");
+            return;
+        }
+            
+            recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+            recognition.lang = selectedLanguage;
+           
+            recognition.continuous = true; // ✅ Prevents stopping between sentences
+            recognition.interimResults = false; // ✅ Avoids partial results
+            recognition.maxAlternatives = 3; // ✅ Increases accuracy
+
+            recognition.onresult = async (event) => {
+                const userSpeech = event.results[0][0].transcript.trim();
+                console.log("User said:", userSpeech);
+
+                chatDiv.innerHTML += `<p><b>You:</b> ${userSpeech}</p>`;
+                conversationHistory.push({ role: "user", text: userSpeech });
+
+                await sendMessage(userSpeech);
+                resetInactivityTimer();
+            };
+
+            
+
+         
+
+            recognition.start();
+        }
+
+
+                // ✅ Stop Listening Function
+            function stopListening() {
+                if (recognition) {
+                    console.log("Stopping speech recognition...");
+                    recognition.stop();
+                    recognition = null;
+                }
+            }
+
+            
+        async function sendMessage(message) {
+            console.log("Sending message to AI:", message);
+
+            const requestPayload = {
+                user_id: "default",
+                prompt: message,
+                report_texts: extractedTexts || [],
+                language: selectedLanguage || "en",
+                voiceId: voiceId,
+                conversation_history: conversationHistory  // ✅ Send previous chat history
+            };
+
+            console.log("Request Payload:", JSON.stringify(requestPayload, null, 2));
+
+        
+
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/generate-response2`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(requestPayload)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error("Error Response:", errorData);
+                    return;
+                }
+
+                const data = await response.json();
+                console.log("AI response:", data.response);
+
+                // ✅ Update chat history with AI response
+                conversationHistory.push({ role: "ai", text: data.response });
+
+                chatDiv.innerHTML += `<p><b>AI:</b> ${data.translated_ai_text}</p>`;
+
+                await playPolly(data.response);
+            } catch (error) {
+                console.error("Network or API Error:", error);
+            }
+        }
+        navigator.mediaDevices.getUserMedia({
+                audio: {
+                    autoGainControl: true,  // ✅ Boosts weak microphone input
+                    noiseSuppression: true, // ✅ Reduces background noise
+                    echoCancellation: true, // ✅ Removes room echo
+                }
+            }).then((stream) => {
+                console.log("🎙 Microphone enhancements enabled.");
+            }).catch((error) => {
+                console.error("❌ Failed to enable microphone enhancements:", error);
+            });
+    
+
+
+        // ✅ Play text-to-speech using AWS Polly
+        // async function playPolly(text) {
+        //     stopPolly(); // Stop any previous audio
+        //     console.log("Playing Polly response...");
+
+        //     const response = await fetch(`${API_BASE_URL}/speak`, {
+        //         method: "POST",
+        //         headers: { "Content-Type": "application/json" },
+        //         body: JSON.stringify({
+        //             text,
+        //             voiceId,
+        //             language: selectedLanguage, // ✅ Ensure Polly speaks in chosen language
+        //         })
+        //     });
+
+        //     if (!response.ok) {
+        //         console.error("Error fetching Polly response:", response.statusText);
+        //         return;
+        //     }
+
+        //     const blob = await response.blob();
+        //     audio = new Audio(URL.createObjectURL(blob));
+
+        //     audio.onerror = function () {
+        //         console.error("Audio playback error: Unsupported format");
+        //     };
+
+        //     audio.play().catch(error => {
+        //         console.error("Error playing Polly response:", error);
+        //     });
+
+        //     return new Promise(resolve => {
+        //         audio.onended = () => {
+        //             resolve();
+        //             console.log("Polly finished speaking. Now starting listening...");
+        //             startListening(); // ✅ Start listening after Polly finishes
+        //         };
+        //     });
+        // }
+         
+
+        // async function playPolly(text) {
+        //         stopPolly(); // ✅ Stop any previous audio
+        //         console.log("🎙️ Playing Polly response...");
+
+        //         try {
+        //             const response = await fetch(`${API_BASE_URL}/speak`, {
+        //                 method: "POST",
+        //                 headers: { "Content-Type": "application/json" },
+        //                 body: JSON.stringify({ text, voiceId, language: selectedLanguage })
+        //             });
+
+        //             if (!response.ok) {
+        //                 console.error("❌ Error fetching Polly response:", response.statusText);
+        //                 return;
+        //             }
+
+        //             const blob = await response.blob();
+        //             const audioUrl = URL.createObjectURL(blob);
+                    
+        //             audio = new Audio(audioUrl);
+        //             audio.preload = "auto";
+
+        //             // ✅ Ensure proper user interaction for Safari/iPhone
+        //             if (isSafari()) {
+        //                 displaySafariMessage();
+        //                 await requestUserInteraction(audio);
+        //             } else {
+        //                 audio.play().catch((e) => {
+        //                     console.warn("⚠️ Autoplay blocked, requiring user interaction:", e);
+        //                     requestUserInteraction(audio);
+        //                 });
+        //             }
+        //             await ensurePollyPlays(audio);
+        //             return new Promise((resolve) => {
+        //                 audio.onended = () => {
+        //                     resolve();
+        //                     console.log("✅ Polly finished speaking. Starting listening...");
+        //                     startListening();
+        //                 };
+        //             });
+
+        //         } catch (error) {
+        //             console.error("❌ Network or API Error:", error);
+        //         }
+        //     }
+
+
+        // function ensurePollyPlays(audioElement) {
+        //         return new Promise((resolve) => {
+        //             if (isSafari()) {
+        //                 displaySafariMessage();
+        //                 document.body.addEventListener("click", function enableAudio() {
+        //                     audioElement.play().catch((err) => console.error("🔇 Playback error:", err));
+        //                     document.body.removeEventListener("click", enableAudio);
+        //                     resolve();
+        //                 });
+        //             } else {
+        //                 audioElement.play().catch((e) => {
+        //                     console.warn("⚠️ Autoplay blocked, requiring user interaction:", e);
+        //                     requestUserInteraction(audioElement);
+        //                 });
+
+        //                 audioElement.onended = resolve;
+        //             }
+        //         });
+        //     }   
+
+        async function playPolly(text) {
+    stopPolly(); // ✅ Stop any previous audio
+    console.log("🎙️ Playing Polly response...");
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/speak`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text, voiceId, language: selectedLanguage })
+        });
+
+        if (!response.ok) {
+            console.error("❌ Error fetching Polly response:", response.statusText);
+            return;
+        }
+
+        const blob = await response.blob();
+        const audioUrl = URL.createObjectURL(blob);
+
+        audio = new Audio(audioUrl);
+        audio.preload = "auto";
+
+        return new Promise((resolve, reject) => {
+            audio.onplay = () => console.log("🔊 Polly audio started.");
+            audio.onended = () => {
+                console.log("✅ Polly finished speaking. Starting listening...");
+                startListening(); // ✅ Ensure listening starts after Polly
+                resolve();
+            };
+            audio.onerror = (err) => {
+                console.error("❌ Polly audio playback error:", err);
+                reject(err);
+            };
+
+            // ✅ Fix for iPhone/Safari
+            if (isSafari()) {
+                displaySafariMessage();
+                requestUserInteraction(audio)
+                    .then(() => audio.play())
+                    .catch(reject);
+            } else {
+                audio.play().catch((e) => {
+                    console.warn("⚠️ Autoplay blocked, requiring user interaction:", e);
+                    requestUserInteraction(audio)
+                        .then(() => audio.play())
+                        .catch(reject);
+                });
+            }
+        });
+
+    } catch (error) {
+        console.error("❌ Network or API Error:", error);
+    }
+}
+            function displayMicAccessMessage() {
+                const messageDiv = document.createElement("div");
+                messageDiv.id = "mic-message";
+                messageDiv.innerHTML = "🎤 Please allow microphone access for voice recognition.";
+                messageDiv.style.position = "fixed";
+                messageDiv.style.bottom = "20px";
+                messageDiv.style.left = "50%";
+                messageDiv.style.transform = "translateX(-50%)";
+                messageDiv.style.backgroundColor = "#f8d7da";
+                messageDiv.style.color = "#721c24";
+                messageDiv.style.padding = "10px 15px";
+                messageDiv.style.borderRadius = "5px";
+                messageDiv.style.boxShadow = "0px 4px 6px rgba(0, 0, 0, 0.1)";
+                messageDiv.style.zIndex = "1000";
+                messageDiv.style.fontSize = "14px";
+                document.body.appendChild(messageDiv);
+
+                setTimeout(() => {
+                    messageDiv.remove();
+                }, 5000);
+            }
+
+
+        // ✅ Show Safari message for user to tap anywhere
+        function displaySafariMessage() {
+                const messageDiv = document.createElement("div");
+                messageDiv.id = "safari-message";
+                messageDiv.innerHTML = "📢 Safari users: Tap anywhere on the screen to enable voice playback.";
+                messageDiv.style.position = "fixed";
+                messageDiv.style.top = "10px";
+                messageDiv.style.left = "50%";
+                messageDiv.style.transform = "translateX(-50%)";
+                messageDiv.style.backgroundColor = "#f8d7da";
+                messageDiv.style.color = "#721c24";
+                messageDiv.style.padding = "10px 15px";
+                messageDiv.style.borderRadius = "5px";
+                messageDiv.style.boxShadow = "0px 4px 6px rgba(0, 0, 0, 0.1)";
+                messageDiv.style.zIndex = "1000";
+                messageDiv.style.fontSize = "14px";
+                document.body.appendChild(messageDiv);
+
+                setTimeout(() => {
+                    messageDiv.remove();
+                }, 5000);
+            }
+
+
+            // ✅ Detect Safari to apply specific fixes
+            function isSafari() {
+                return /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+            }
+
+            // ✅ Request user interaction for iPhone/Safari audio playback
+            async function requestUserInteraction(audioElement) {
+                return new Promise((resolve) => {
+                    const enableAudio = () => {
+                        audioElement.play().catch((err) => console.error("🔇 Playback error:", err));
+                        document.body.removeEventListener("click", enableAudio);
+                        resolve();
+                    };
+
+                    console.log("⚠️ Waiting for user interaction to play audio...");
+                    document.body.addEventListener("click", enableAudio);
+                });
+            }
+
+
+            // ✅ Ensure user interaction on Safari/iPhone (Fixes no audio issue)
+            function ensureUserInteraction(audioElement) {
+                const enableAudio = () => {
+                    audioElement.play().catch((err) => console.error("🔇 Playback error:", err));
+                    document.body.removeEventListener("click", enableAudio);
+                };
+
+                document.body.addEventListener("click", enableAudio);
+            }
+
+            // ✅ Request Microphone Permission (Fix for iPhone)
+        // function requestMicPermission() {
+        //         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        //             navigator.mediaDevices.getUserMedia({ audio: true })
+        //                 .then(() => console.log("Microphone access granted"))
+        //                 .catch(err => console.error("Microphone access denied:", err));
+        //         }
+        //     }
+
+
+        async function requestMicPermission() {
+                console.log("🎤 Requesting microphone access...");
+
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    console.error("❌ getUserMedia API is not supported.");
+                    alert("Your browser does not support microphone access. Please use Safari on iPhone.");
+                    return;
+                }
+
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    console.log("✅ Microphone access granted.");
+                    userInteracted = true; // ✅ Now Polly can play without extra taps
+                    startListening(); // ✅ Start listening immediately after permission granted
+                } catch (err) {
+                    console.error("❌ Microphone access denied:", err);
+                    alert("Microphone access is required for voice recognition. Please enable it in Safari Settings.");
+                }
+            }
+
+         
+            // ✅ Global variable to track if the user has interacted once
+            let userInteracted = false;  
+            
+            
+         
+                
+
+        // ✅ Stop Polly (and start listening if `forceListen` is true)
+        // function stopPolly(forceListen = false) {
+        //     if (audio) {
+        //         console.log("Stopping Polly audio...");
+        //         audio.pause();
+        //         audio = null;
+        //     }
+        //     if (forceListen) {
+        //         startListening();
+        //     }
+        // }
+        function stopPolly(forceListen = false) {
+    if (audio && !audio.paused) {  // ✅ Check if audio exists and is playing
+        console.log("🔇 Stopping Polly audio...");
+        audio.pause();
+        audio.currentTime = 0;  // ✅ Reset audio playback position
+        audio = null;
+    } else {
+        console.warn("⚠️ No Polly audio is playing.");
+    }
+
+    if (forceListen) {
+        console.log("🎤 Starting speech recognition after stopping Polly...");
+        startListening();
+    }
+}
+
+        // ✅ Handle user inactivity
+        let reminderTimers = []; // Store multiple timers
+
+
+
+        // ✅ Request Microphone Access (for Safari/iPhone)
+    function requestMicrophonePermission() {
+        console.log("🎤 Requesting microphone access...");
+
+        if (!window.SpeechRecognition && !window.webkitSpeechRecognition) {
+            console.error("❌ Speech Recognition API is not supported in this browser.");
+            return;
+        }
+
+        const tempRecognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+        tempRecognition.onstart = function () {
+            console.log("✅ Microphone access granted.");
+            startListening();
+        };
+
+        tempRecognition.onerror = function (event) {
+            console.error("❌ Microphone access denied or error:", event.error);
+        };
+
+        tempRecognition.start();
+    }
+function resetInactivityTimer() {
+    // Clear existing timers before setting new ones
+    resetTimers();
+
+    // Main timeout for ending the conversation
+    inactivityTimer = setTimeout(() => {
+        console.log("User inactive for 5 minutes. Ending conversation.");
+        playPolly("I haven't heard from you in a while. I am ending the conversation now. Have a great day!");
+        endBtn.click();
+    }, 5 * 60 * 1000);
+
+    // Reminders
+    reminderTimers.push(setTimeout(() => playPolly("I am still here. Let me know if you have any more questions!"), 1 * 60 * 1000));
+    reminderTimers.push(setTimeout(() => playPolly("If you need any further assistance, just say something!"), 2 * 60 * 1000));
+    reminderTimers.push(setTimeout(() => playPolly("I will end this session soon if there's no response."), 3 * 60 * 1000));
+}
+
+
+        async function uploadPDFs() {
+            if (fileInput.files.length === 0) {
+                console.warn("No file selected.");
+                return;
+            }
+
+            fileListDiv.innerHTML += "<p>Uploading files...</p>";
+            extractedTexts = []; // Reset extracted texts
+
+            for (const file of fileInput.files) {
+                const formData = new FormData();
+                formData.append("file", file);
+
+                try {
+                    const response = await fetch(`${API_BASE_URL}/upload-pdf`, {
+                        method: "POST",
+                        body: formData
+                    });
+
+                    const responseData = await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(responseData.detail || `Upload failed for ${file.name}`);
+                    }
+
+                    // Store extracted text
+                    extractedTexts.push(responseData.text);
+
+                    // Success message
+                    const fileText = document.createElement("p");
+                    fileText.textContent = `✅ Uploaded: ${file.name}`;
+                    fileListDiv.appendChild(fileText);
+
+                } catch (error) {
+                    console.error(`Error uploading PDF (${file.name}):`, error);
+                    const errorMsg = document.createElement("p");
+                    errorMsg.textContent = `❌ Upload failed for ${file.name}: ${error.message}`;
+                    errorMsg.style.color = "red";
+                    fileListDiv.appendChild(errorMsg);
+                }
+            }
+        }
+        
+
+
+        // ✅ Open file picker when clicking upload button
+        uploadButton.addEventListener("click", function () {
+            fileInput.click();
+        });
+
+        fileInput.addEventListener("change", uploadPDFs);
+        
+    });
+</script>
+</body>
+</html>
