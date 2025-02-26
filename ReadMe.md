@@ -30,11 +30,11 @@
 ---
 
 ## 🛠 **Tech Stack**
-- **Backend**: Python, AWS Lambda, Boto3, Anthropic Claude AI, OpenAI  
+- **Backend**: Python, AWS Lambda, Boto3, Anthropic Claude AI  
 - **Frontend**: HTML, CSS, JavaScript  
 - **Database**: PostgreSQL  
 - **Auth**: JWT (JSON Web Tokens)  
-- **Deployment**: Vercel  
+- **Deployment**: AWS lambda 
 
 ---
 
