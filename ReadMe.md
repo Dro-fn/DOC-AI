@@ -25,7 +25,7 @@
 
 ## 🚀 **Live Demo**
 🔗 **DocAI is deployed on Vercel**:  
-👉 **[https://doc-ai.vercel.app](https://doc-ai.vercel.app)**
+👉 **https://doctor-ai.drofn.com/**
 
 ---
 
