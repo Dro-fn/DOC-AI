@@ -24,7 +24,7 @@
 ---
 
 ## 🚀 **Live Demo**
-🔗 **DocAI is deployed on Vercel**:  
+🔗 **DocAI is deployed on aws lambda**:  
 👉 **https://doctor-ai.drofn.com/**
 
 ---
